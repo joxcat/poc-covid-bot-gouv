@@ -12,13 +12,15 @@ required-features = ["covid-bot","discord"]
 [[bin]]
 name = "webhook"
 path = "src/bin/webhook.rs"
+required-features = ["webhook"]
 
 [[bin]]
 name = "server"
 path = "src/bin/server.rs"
+required-features = ["server"]
 
 [features]
-covid-bot = ["serde","serde_json","csv"]
+covid-bot = ["serde","serde_json","csv","discord"]
 webhook = []
 server = []
 discord = []

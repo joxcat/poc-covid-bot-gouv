@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 type Resp<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+#[allow(clippy::implicit_hasher)]
 pub async fn get_uri(uri: &str, headers: HashMap<String,String>) -> Resp<Response<Body>> {
     let mut req = Request::get(uri);
     append_headers(req.headers_mut().unwrap(), headers)?;
@@ -27,6 +28,7 @@ pub async fn get_uri(uri: &str, headers: HashMap<String,String>) -> Resp<Respons
     Ok(resp)
 }
 
+#[allow(clippy::implicit_hasher)]
 pub async fn post_uri(uri: &str, headers: HashMap<String,String>, body: &str) -> Resp<Response<Body>> {
     let mut req = Request::post(uri);
 
@@ -52,6 +54,7 @@ pub async fn post_uri(uri: &str, headers: HashMap<String,String>, body: &str) ->
     Ok(resp)
 }
 
+#[allow(clippy::implicit_hasher)]
 fn append_headers(builder: &mut hyper::HeaderMap, headers: HashMap<String,String>) -> Resp<()> {
     for (k,v) in headers {
         builder.insert(HeaderName::from_lowercase(k.to_lowercase().as_bytes())?, HeaderValue::from_str(v.as_str())?);

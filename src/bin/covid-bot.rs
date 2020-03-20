@@ -12,8 +12,8 @@ use prettytable::Table;
 type Resp<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const PASSIVE_WAIT: u64 = 3600;
-const WEBHOOK_URL: &'static str = "https://ptb.discordapp.com/api/webhooks/689444281236455482/HbjqHj5TcFpGAPbx15MSC4LfHN5VOYOqDqYLptfaYuJkeU20r6G3OV8A3lYCY43Pxk9z";
-const USER_AGENT: &'static str = "CovidBot/0.1.1 (Johan Planchon)";
+const WEBHOOK_URL: &str = "https://ptb.discordapp.com/api/webhooks/689444281236455482/HbjqHj5TcFpGAPbx15MSC4LfHN5VOYOqDqYLptfaYuJkeU20r6G3OV8A3lYCY43Pxk9z";
+const USER_AGENT: &str = "CovidBot/0.1.1 (Johan Planchon)";
 
 #[tokio::main]
 async fn main() -> Resp<()> {
@@ -75,15 +75,15 @@ struct Stats {
 
 async fn push_to_webhook(records: Vec<Record>) -> Resp<()> {
     let yesterday = records.get_by_date(util::date_before_today(1));
-    let monde = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Monde).first().unwrap_or_default())).to_string());
-    let france = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Pays).first().unwrap_or_default())).to_string());
-    let savoie = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-73").first().unwrap_or_default())).to_string());
-    let rhone = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-69").first().unwrap_or_default())).to_string());
+    let monde = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Monde).first())).to_string());
+    let france = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Pays).first())).to_string());
+    let savoie = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-73").first())).to_string());
+    let rhone = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-69").first())).to_string());
 
     let date = chrono::Local::now().format("%A %d %B %Y").to_string();
     let embed = DiscordEmbed {
         title: Some(&date),
-        color: Some(4535472),
+        color: Some(4_535_472),
         description: Some("Evolution du nombre de cas recensés en France et dans le Monde, ainsi que du nombre de morts (**daté a J-1**).\n\n*Sources : ||Santé Publique France, Agences Régionale de Santé, Préfectures||*"),
         url: None,
         author: Some(DiscordAuthor {
@@ -156,17 +156,18 @@ struct Record {
 impl Default for Record {
     fn default() -> Self {
         Record {
-            date: "N/A",
+            date: String::from("N/A"),
             granularite: Granularite::NA,
-            maille_code: "N/A",
-            maille_nom: "N/A",
+            maille_code: String::from("N/A"),
+            maille_nom: String::from("N/A"),
             cas_confirmes: None,
             deces: None,
-            source_nom: "N/A",
-            source_url: "N/A"
+            source_nom: String::from("N/A"),
+            source_url: String::from("N/A")
         }
     }
 }
+
 trait EasyFilter {
     fn get_by_date(&self, date: util::Date) -> Vec<Record>;
     fn get_by_gran(&self, gran: Granularite) -> Vec<Record>;
@@ -233,11 +234,21 @@ enum Granularite {
     NA
 }
 
-impl<'a> From<&Record> for Stats {
-    fn from(rec: &Record) -> Self {
+impl<'a> From<Option<&Record>> for Stats {
+    fn from(rec: Option<&Record>) -> Self {
+        let rec = match rec {
+            Some(r) => r.clone(),
+            None => Record::default()
+        };
         Stats { 
-            nb_cas: rec.cas_confirmes.unwrap_or("N/A").to_string(),
-            nb_morts: rec.deces.unwrap_or("N/A").to_string()
+            nb_cas: match rec.cas_confirmes {
+                Some(nb) => nb.to_string(),
+                None => String::from("N/A")
+            },
+            nb_morts: match rec.deces {
+                Some(nb) => nb.to_string(),
+                None => String::from("N/A")
+            }
         }
     }
 }
