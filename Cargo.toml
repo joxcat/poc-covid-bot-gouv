@@ -1,6 +1,6 @@
 [package]
 name = "gouv-rs"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Johan Planchon <dev@planchon.xyz>"]
 edition = "2018"
 

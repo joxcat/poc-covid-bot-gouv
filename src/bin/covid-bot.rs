@@ -13,7 +13,7 @@ type Resp<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const PASSIVE_WAIT: u64 = 3600;
 const WEBHOOK_URL: &'static str = "https://ptb.discordapp.com/api/webhooks/689444281236455482/HbjqHj5TcFpGAPbx15MSC4LfHN5VOYOqDqYLptfaYuJkeU20r6G3OV8A3lYCY43Pxk9z";
-const USER_AGENT: &'static str = "CovidBot/0.1 (Johan Planchon)";
+const USER_AGENT: &'static str = "CovidBot/0.1.1 (Johan Planchon)";
 
 #[tokio::main]
 async fn main() -> Resp<()> {
@@ -75,10 +75,10 @@ struct Stats {
 
 async fn push_to_webhook(records: Vec<Record>) -> Resp<()> {
     let yesterday = records.get_by_date(util::date_before_today(1));
-    let monde = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Monde).first().unwrap())).to_string());
-    let france = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Pays).first().unwrap())).to_string());
-    let savoie = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-73").first().unwrap())).to_string());
-    let rhone = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-69").first().unwrap())).to_string());
+    let monde = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Monde).first().unwrap_or_default())).to_string());
+    let france = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Pays).first().unwrap_or_default())).to_string());
+    let savoie = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-73").first().unwrap_or_default())).to_string());
+    let rhone = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-69").first().unwrap_or_default())).to_string());
 
     let date = chrono::Local::now().format("%A %d %B %Y").to_string();
     let embed = DiscordEmbed {
@@ -134,7 +134,7 @@ async fn push_to_webhook(records: Vec<Record>) -> Resp<()> {
     ];
     
     let x: Response<Body> = util::post_uri(WEBHOOK_URL, headers.into_hashmap(), &body).await?;
-    println!("[{}] Status Code: {}", util::time_now_formatted(), x.status());
+    println!("[{}] => Status Code: {}", util::time_now_formatted(), x.status());
     Ok(())
 }
 
@@ -153,6 +153,20 @@ struct Record {
     source_url: String
 }
 
+impl Default for Record {
+    fn default() -> Self {
+        Record {
+            date: "N/A",
+            granularite: Granularite::NA,
+            maille_code: "N/A",
+            maille_nom: "N/A",
+            cas_confirmes: None,
+            deces: None,
+            source_nom: "N/A",
+            source_url: "N/A"
+        }
+    }
+}
 trait EasyFilter {
     fn get_by_date(&self, date: util::Date) -> Vec<Record>;
     fn get_by_gran(&self, gran: Granularite) -> Vec<Record>;
@@ -215,14 +229,15 @@ enum Granularite {
     Departement,
     Pays,
     CollectiviteOutremer,
-    Monde
+    Monde,
+    NA
 }
 
 impl<'a> From<&Record> for Stats {
     fn from(rec: &Record) -> Self {
         Stats { 
-            nb_cas: rec.cas_confirmes.unwrap().to_string(),
-            nb_morts: rec.deces.unwrap().to_string()
+            nb_cas: rec.cas_confirmes.unwrap_or("N/A").to_string(),
+            nb_morts: rec.deces.unwrap_or("N/A").to_string()
         }
     }
 }
