@@ -7,7 +7,7 @@ edition = "2018"
 [[bin]]
 name = "covid-bot"
 path = "src/bin/covid-bot.rs"
-required-features = ["covid-bot","discord"]
+required-features = ["covid-bot"]
 
 [[bin]]
 name = "webhook"
@@ -26,7 +26,7 @@ server = []
 discord = []
 
 [dependencies]
-hyper = { version = "0.13", default-features = false}
+hyper = { version = "0.13", features = ["tcp"], default-features = false}
 hyper-tls = "0.4"
 tokio = { version = "0.2", features = ["macros","rt-core"] }
 sha2 = "0.8"

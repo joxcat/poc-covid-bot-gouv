@@ -1,5 +1,5 @@
-use sha2::{Sha256,Digest};
 use chrono::Local;
+use sha2::{Digest, Sha256};
 
 pub fn read_file(path: &str) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|_| "".to_owned())
@@ -23,14 +23,16 @@ pub fn time_now_formatted() -> String {
 pub struct Date {
     pub year: String,
     pub month: String,
-    pub day: String
+    pub day: String,
 }
 
 pub fn date_before_today(offset: i64) -> Date {
-    let now = Local::now().checked_sub_signed(chrono::Duration::days(offset)).unwrap();
+    let now = Local::now()
+        .checked_sub_signed(chrono::Duration::days(offset))
+        .unwrap();
     Date {
         year: now.format("%Y").to_string(),
         month: now.format("%m").to_string(),
-        day: now.format("%d").to_string()
+        day: now.format("%d").to_string(),
     }
 }

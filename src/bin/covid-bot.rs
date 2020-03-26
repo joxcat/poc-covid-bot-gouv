@@ -3,10 +3,11 @@
 extern crate prettytable;
 
 use std::thread;
+use std::sync::Arc;
 
-use gouv_rs::{util, hook};
 use gouv_rs::discord::*;
-use hyper::{Response,Body};
+use gouv_rs::{hook, util};
+use hyper::{Body, Response};
 use prettytable::Table;
 
 type Resp<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -17,33 +18,22 @@ const USER_AGENT: &str = "CovidBot/0.1.1 (Johan Planchon)";
 
 #[tokio::main]
 async fn main() -> Resp<()> {
-    hook("https://raw.githubusercontent.com/opencovid19-fr/data/master/dist/chiffres-cles.csv", None, None, process_body).await?;
+    let client = Arc::new(hyper::Client::builder().build(hyper_tls::HttpsConnector::new()));
+    hook(
+        "https://raw.githubusercontent.com/opencovid19-fr/data/master/dist/chiffres-cles.csv",
+        None,
+        None,
+        client,
+        process_body
+    )
+    .await?;
     Ok(())
 }
 
 async fn process_body(body: Response<Body>) -> Resp<()> {
-    if let Some(etag) = body.headers().get("Etag") {
-        let hashbody = etag.to_str()?;
-        let oldhash = util::read_file("./log.txt");
+    let oldhash = util::read_file("./log.txt");
 
-        if oldhash != hashbody {
-            println!("[{}] Content updated!", util::time_now_formatted());
-            util::write_file("./log.txt", &hashbody);
-            push_to_webhook(parse_csv(body).await?).await?;
-        } else {
-            println!("[{}] Content unchanged!", util::time_now_formatted());
-        }
-
-    } else {
-        /* @DEBUG */
-        println!("{:?}", body.headers());
-        let body = hyper::body::to_bytes(body.into_body()).await?;
-        let body = String::from_utf8(body.to_vec())?;
-        eprintln!("{}", body);
-        /* @END */
-        eprintln!("Internal Error (Cannot find Etag header)");
-        std::process::exit(2);
-    }
+    push_to_webhook(parse_csv(body).await?, oldhash).await?;
 
     thread::sleep(std::time::Duration::from_secs(PASSIVE_WAIT));
     Ok(())
@@ -53,7 +43,7 @@ async fn parse_csv(body: Response<Body>) -> Resp<Vec<Record>> {
     let body = hyper::body::to_bytes(body.into_body()).await?;
     let body = String::from_utf8(body.to_vec())?;
     let mut doc = csv::Reader::from_reader(body.as_bytes());
-    
+
     let mut records: Vec<Record> = Vec::new();
     for result in doc.deserialize() {
         let record: csv::Result<Record> = result;
@@ -70,74 +60,97 @@ async fn parse_csv(body: Response<Body>) -> Resp<Vec<Record>> {
 #[derive(Debug)]
 struct Stats {
     pub nb_cas: String,
-    pub nb_morts: String
+    pub nb_morts: String,
 }
-
-async fn push_to_webhook(records: Vec<Record>) -> Resp<()> {
-    let yesterday = records.get_by_date(util::date_before_today(1));
-    let monde = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Monde).first())).to_string());
-    let france = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_gran(Granularite::Pays).first())).to_string());
-    let savoie = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-73").first())).to_string());
-    let rhone = format!("```\n{}```", Table::from(Stats::from(yesterday.get_by_code("DEP-69").first())).to_string());
-
+async fn push_to_webhook(records: Vec<Record>, oldhash: String) -> Resp<()> {
     let date = chrono::Local::now().format("%A %d %B %Y").to_string();
-    let embed = DiscordEmbed {
-        title: Some(&date),
-        color: Some(4_535_472),
-        description: Some("Evolution du nombre de cas recensés en France et dans le Monde, ainsi que du nombre de morts (**daté a J-1**).\n\n*Sources : ||Santé Publique France, Agences Régionale de Santé, Préfectures||*"),
-        url: None,
-        author: Some(DiscordAuthor {
-            name: Some("Covid-19 Daily Update"),
-            url: Some("https://github.com/joxcat/gouv-rs"),
-            icon_url: None,
-            proxy_icon_url: None
-        }),
-        footer: Some(DiscordFooter {
-            text: Some("Source des données https://github.com/opencovid19-fr/data"),
-            icon_url: None,
-            proxy_icon_url: None
-        }),
-        fields: Some(vec![
-            DiscordField {
-                name: "Stats France",
-                value: &france,
-                inline: Some(false)
-            },
-            DiscordField {
-                name: "Stats Monde",
-                value: &monde,
-                inline: Some(false)
-            },
-            DiscordField {
-                name: "Stats Rhône",
-                value: &rhone,
-                inline: Some(false)
-            },
-            DiscordField {
-                name: "Stats Savoie",
-                value: &savoie,
-                inline: Some(false)
-            }
-        ])
-    };
-    let discord_msg = DiscordWebhook {
-        inner: DiscordInner::Embeds(vec![embed]),
-        username: None,
-        avatar_url: None,
-        tts: None,
-        allowed_mentions: None
-    };
-    let body = serde_json::to_string(&discord_msg)?;
-    let headers = vec![
-        ("User-Agent",USER_AGENT),
-        ("Content-Type","application/json")
-    ];
-    
-    let x: Response<Body> = util::post_uri(WEBHOOK_URL, headers.into_hashmap(), &body).await?;
-    println!("[{}] => Status Code: {}", util::time_now_formatted(), x.status());
+    let yesterday = records.get_by_date(util::date_before_today(1));
+    let monde = string_from(yesterday.get_by_gran(Granularite::Monde).first());
+    let france = string_from(yesterday.get_by_gran(Granularite::Pays).first());
+    let savoie = string_from(yesterday.get_by_code("DEP-73").first());
+    let rhone = string_from(yesterday.get_by_code("DEP-69").first());
+
+    let hashbody = base64::encode(
+        format!("{}{}{}{}{}", date, monde, france, savoie, rhone)
+    );
+
+    if oldhash != hashbody {
+        println!("[{}] Content updated!", util::time_now_formatted());
+        util::write_file("./log.txt", &hashbody);
+
+        let embed = DiscordEmbed {
+            title: Some(&date),
+            color: Some(4_535_472),
+            description: Some("Evolution du nombre de cas recensés en France et dans le Monde, ainsi que du nombre de morts (**daté a J-1**).\n\n*Sources : ||Santé Publique France, Agences Régionale de Santé, Préfectures||*"),
+            url: None,
+            author: Some(DiscordAuthor {
+                name: Some("Covid-19 Daily Update"),
+                url: Some("https://github.com/joxcat/gouv-rs"),
+                icon_url: None,
+                proxy_icon_url: None
+            }),
+            footer: Some(DiscordFooter {
+                text: Some("Source des données https://github.com/opencovid19-fr/data"),
+                icon_url: None,
+                proxy_icon_url: None
+            }),
+            fields: Some(vec![
+                DiscordField {
+                    name: "Stats France",
+                    value: &france,
+                    inline: Some(false)
+                },
+                DiscordField {
+                    name: "Stats Monde",
+                    value: &monde,
+                    inline: Some(false)
+                },
+                DiscordField {
+                    name: "Stats Rhône",
+                    value: &rhone,
+                    inline: Some(false)
+                },
+                DiscordField {
+                    name: "Stats Savoie",
+                    value: &savoie,
+                    inline: Some(false)
+                }
+            ])
+        };
+        let discord_msg = DiscordWebhook {
+            inner: DiscordInner::Embeds(vec![embed]),
+            username: None,
+            avatar_url: None,
+            tts: None,
+            allowed_mentions: None,
+        };
+        let body = serde_json::to_string(&discord_msg)?;
+        let headers = vec![
+            ("User-Agent", USER_AGENT),
+            ("Content-Type", "application/json"),
+        ];
+
+        let client = Arc::new(hyper::Client::builder().build(hyper_tls::HttpsConnector::new()));
+        let x: Response<Body> = util::post_uri(WEBHOOK_URL, headers.into_hashmap(), &body, client).await?;
+        println!(
+            "[{}] => Status Code: {}",
+            util::time_now_formatted(),
+            x.status()
+        );
+    } else {
+        println!("[{}] Content unchanged!", util::time_now_formatted());
+    }
+
     Ok(())
 }
 
+fn string_from(el: Option<&Record>) -> String {
+    format!("```\n{}```",
+        Table::from(Stats::from(
+            el
+        ))
+    .to_string())
+}
 // Records management
 use serde::Deserialize;
 
@@ -150,9 +163,8 @@ struct Record {
     cas_confirmes: Option<u32>,
     deces: Option<u32>,
     source_nom: String,
-    source_url: String
+    source_url: String,
 }
-
 impl Default for Record {
     fn default() -> Self {
         Record {
@@ -163,7 +175,7 @@ impl Default for Record {
             cas_confirmes: None,
             deces: None,
             source_nom: String::from("N/A"),
-            source_url: String::from("N/A")
+            source_url: String::from("N/A"),
         }
     }
 }
@@ -179,47 +191,51 @@ impl EasyFilter for Vec<Record> {
     fn get_by_date(&self, date: util::Date) -> Vec<Record> {
         let today = format!("{}-{}-{}", date.year, date.month, date.day);
         self.iter()
-        .filter_map(|el| {
-            if el.date == today {
-                Some(el.clone())
-            } else {
-                None
-            }
-        }).collect::<Vec<Record>>()
+            .filter_map(|el| {
+                if el.date == today {
+                    Some(el.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<Record>>()
     }
 
     fn get_by_gran(&self, gran: Granularite) -> Vec<Record> {
         self.iter()
-        .filter_map(|el| {
-            if el.granularite == gran {
-                Some(el.clone())
-            } else {
-                None
-            }
-        }).collect::<Vec<Record>>()
+            .filter_map(|el| {
+                if el.granularite == gran {
+                    Some(el.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<Record>>()
     }
 
     fn get_by_src(&self, src: &str) -> Vec<Record> {
         self.iter()
-        .filter_map(|el| {
-            if el.source_nom == src {
-                Some(el.clone())
-            } else {
-                None
-            }
-        }).collect::<Vec<Record>>()
+            .filter_map(|el| {
+                if el.source_nom == src {
+                    Some(el.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<Record>>()
     }
 
     fn get_by_code(&self, dep_code: &str) -> Vec<Record> {
         let dep_code = dep_code.to_uppercase();
         self.iter()
-        .filter_map(|el| {
-            if el.maille_code == dep_code.as_str() {
-                Some(el.clone())
-            } else {
-                None
-            }
-        }).collect::<Vec<Record>>()
+            .filter_map(|el| {
+                if el.maille_code == dep_code.as_str() {
+                    Some(el.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<Record>>()
     }
 }
 
@@ -231,24 +247,24 @@ enum Granularite {
     Pays,
     CollectiviteOutremer,
     Monde,
-    NA
+    NA,
 }
 
 impl<'a> From<Option<&Record>> for Stats {
     fn from(rec: Option<&Record>) -> Self {
         let rec = match rec {
             Some(r) => r.clone(),
-            None => Record::default()
+            None => Record::default(),
         };
-        Stats { 
+        Stats {
             nb_cas: match rec.cas_confirmes {
                 Some(nb) => nb.to_string(),
-                None => String::from("N/A")
+                None => String::from("N/A"),
             },
             nb_morts: match rec.deces {
                 Some(nb) => nb.to_string(),
-                None => String::from("N/A")
-            }
+                None => String::from("N/A"),
+            },
         }
     }
 }
@@ -256,15 +272,14 @@ impl<'a> From<Option<&Record>> for Stats {
 use std::collections::HashMap;
 
 trait FromStrVec {
-    fn into_hashmap(&self) -> HashMap<String,String>;
+    fn into_hashmap(&self) -> HashMap<String, String>;
 }
 
-impl FromStrVec for Vec<(&str,&str)> {
-    fn into_hashmap(&self) -> HashMap<String,String>  {
-        self
-            .iter()
+impl FromStrVec for Vec<(&str, &str)> {
+    fn into_hashmap(&self) -> HashMap<String, String> {
+        self.iter()
             .map(|el| (el.0.to_string(), el.1.to_string()))
-            .collect::<HashMap<String,String>>()
+            .collect::<HashMap<String, String>>()
     }
 }
 
@@ -273,8 +288,8 @@ impl From<Stats> for Table {
         let mut t = Table::new();
         t.set_format(*prettytable::format::consts::FORMAT_DEFAULT);
 
-        t.add_row(row!["Nombre de cas","Nombre de morts"]);
-        t.add_row(row![&stats.nb_cas,&stats.nb_morts]);
+        t.add_row(row!["Nombre de cas", "Nombre de morts"]);
+        t.add_row(row![&stats.nb_cas, &stats.nb_morts]);
 
         t
     }
@@ -285,7 +300,7 @@ trait FormatToDiscord {
 }
 
 impl FormatToDiscord for Table {
-    fn format_discord(&self) -> String  {
+    fn format_discord(&self) -> String {
         format!("```markdown\n{}\n```", self.to_string())
     }
 }

@@ -1,9 +1,9 @@
 use std::convert::Infallible;
-use std::net::SocketAddr;
 use std::fs;
+use std::net::SocketAddr;
 
-use hyper::{Body, Request, Response, Server};
 use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Request, Response, Server};
 
 async fn hello_world(_req: Request<Body>) -> Result<Response<Body>, Infallible> {
     let resp = fs::read_to_string("./index.html").unwrap_or_else(|_| "".to_owned());
